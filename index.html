@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Black Particle Flow</title>
+  <style>
+    :root {
+      --bg: #020203;
+      --bg-glow: #07111f;
+      --text: rgba(230, 243, 255, 0.92);
+      --muted: rgba(151, 175, 203, 0.6);
+      --accent: #8ed8ff;
+      --accent-2: #5c7cff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(26, 51, 92, 0.2), transparent 32%),
+        radial-gradient(circle at 80% 10%, rgba(47, 92, 145, 0.12), transparent 30%),
+        radial-gradient(circle at 50% 80%, rgba(17, 34, 62, 0.28), transparent 44%),
+        linear-gradient(180deg, #010102 0%, #020306 45%, #000000 100%);
+      color: var(--text);
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 72px 72px;
+      mask-image: radial-gradient(circle at center, black 25%, transparent 100%);
+      opacity: 0.22;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .hud {
+      position: fixed;
+      left: clamp(20px, 3vw, 40px);
+      top: clamp(20px, 3vw, 36px);
+      z-index: 2;
+      pointer-events: none;
+      user-select: none;
+      mix-blend-mode: screen;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      letter-spacing: 0.44em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 6vw, 78px);
+      line-height: 0.95;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      text-shadow: 0 0 18px rgba(142, 216, 255, 0.16);
+    }
+
+    .subtitle {
+      margin-top: 14px;
+      max-width: 420px;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .badge {
+      position: fixed;
+      right: clamp(18px, 3vw, 28px);
+      bottom: clamp(18px, 3vw, 28px);
+      z-index: 2;
+      padding: 10px 14px;
+      border: 1px solid rgba(142, 216, 255, 0.16);
+      border-radius: 999px;
+      background: rgba(7, 13, 22, 0.35);
+      backdrop-filter: blur(10px);
+      color: rgba(216, 232, 255, 0.8);
+      font-size: 11px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      pointer-events: none;
+      user-select: none;
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+        0 0 32px rgba(31, 111, 255, 0.12);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene" aria-hidden="true"></canvas>
+
+  <div class="hud">
+    <div class="eyebrow">Neural Void</div>
+    <h1>Particle<br>Flow</h1>
+    <div class="subtitle">Move the mouse to bend the field. Click to release a pulse.</div>
+  </div>
+
+  <div class="badge">Black Mode</div>
+
+  <script>
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+
+    const state = {
+      width: 0,
+      height: 0,
+      dpr: Math.min(window.devicePixelRatio || 1, 2),
+      particles: [],
+      sparks: [],
+      pulses: [],
+      pointer: {
+        x: 0,
+        y: 0,
+        lastX: 0,
+        lastY: 0,
+        speedX: 0,
+        speedY: 0,
+        active: false,
+        down: false
+      },
+      time: 0,
+      particleCount: 0
+    };
+
+    class Particle {
+      constructor(index) {
+        this.index = index;
+        this.reset(true);
+      }
+
+      reset(initial = false) {
+        const spread = initial ? 1 : 0.2;
+        this.x = Math.random() * state.width;
+        this.y = Math.random() * state.height;
+        this.vx = (Math.random() - 0.5) * spread;
+        this.vy = (Math.random() - 0.5) * spread;
+        this.base = 0.4 + Math.random() * 1.8;
+        this.size = 0.7 + Math.random() * 2.2;
+        this.hue = 190 + Math.random() * 45;
+        this.alpha = 0.35 + Math.random() * 0.5;
+        this.orbit = 0.002 + Math.random() * 0.0032;
+        this.wander = 0.8 + Math.random() * 1.8;
+      }
+
+      update(time) {
+        const field = flowField(this.x, this.y, time);
+        this.vx += field.x * 0.028;
+        this.vy += field.y * 0.028;
+
+        const dx = state.pointer.x - this.x;
+        const dy = state.pointer.y - this.y;
+        const distSq = dx * dx + dy * dy;
+        const pointerRadius = state.pointer.down ? 340 : 220;
+
+        if (state.pointer.active && distSq < pointerRadius * pointerRadius) {
+          const dist = Math.max(18, Math.sqrt(distSq));
+          const force = (1 - dist / pointerRadius) * (state.pointer.down ? 0.82 : 0.34);
+          this.vx -= (dx / dist) * force * 0.9;
+          this.vy -= (dy / dist) * force * 0.9;
+          this.vx += state.pointer.speedX * 0.0026;
+          this.vy += state.pointer.speedY * 0.0026;
+        }
+
+        for (let i = state.pulses.length - 1; i >= 0; i--) {
+          const pulse = state.pulses[i];
+          const px = this.x - pulse.x;
+          const py = this.y - pulse.y;
+          const pulseDist = Math.sqrt(px * px + py * py);
+          const edge = Math.abs(pulseDist - pulse.radius);
+
+          if (edge < 80) {
+            const push = (1 - edge / 80) * pulse.force;
+            this.vx += (px / (pulseDist || 1)) * push;
+            this.vy += (py / (pulseDist || 1)) * push;
+          }
+        }
+
+        const swirl = Math.sin(time * 0.001 + this.index * this.orbit) * this.wander;
+        this.vx += Math.cos(time * 0.0014 + this.y * 0.003) * 0.005 * swirl;
+        this.vy += Math.sin(time * 0.0011 + this.x * 0.003) * 0.005 * swirl;
+
+        this.vx *= 0.965;
+        this.vy *= 0.965;
+        this.x += this.vx;
+        this.y += this.vy;
+
+        if (this.x < -40 || this.x > state.width + 40 || this.y < -40 || this.y > state.height + 40) {
+          this.reset();
+        }
+      }
+
+      draw() {
+        const speed = Math.hypot(this.vx, this.vy);
+        const glow = Math.min(18, 5 + speed * 4);
+
+        ctx.beginPath();
+        ctx.fillStyle = `hsla(${this.hue}, 100%, 72%, ${this.alpha})`;
+        ctx.shadowColor = `hsla(${this.hue}, 100%, 70%, 0.55)`;
+        ctx.shadowBlur = glow;
+        ctx.arc(this.x, this.y, this.size + speed * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    class Spark {
+      constructor(x, y, angle, speed, hue, size) {
+        this.x = x;
+        this.y = y;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.hue = hue;
+        this.life = 1;
+        this.decay = 0.012 + Math.random() * 0.01;
+        this.size = size;
+      }
+
+      update() {
+        this.vx *= 0.985;
+        this.vy *= 0.985;
+        this.vy += 0.01;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+      }
+
+      draw() {
+        if (this.life <= 0) {
+          return;
+        }
+
+        ctx.beginPath();
+        ctx.fillStyle = `hsla(${this.hue}, 100%, 72%, ${this.life * 0.8})`;
+        ctx.shadowColor = `hsla(${this.hue}, 100%, 72%, ${this.life})`;
+        ctx.shadowBlur = 18;
+        ctx.arc(this.x, this.y, this.size * this.life, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function flowField(x, y, time) {
+      const t = time * 0.00055;
+      const a = Math.sin(x * 0.0024 + t) * 1.8;
+      const b = Math.cos(y * 0.0022 - t * 1.3) * 1.6;
+      const c = Math.sin((x + y) * 0.0011 - t * 0.7) * Math.PI;
+      const angle = a + b + c;
+
+      return {
+        x: Math.cos(angle),
+        y: Math.sin(angle)
+      };
+    }
+
+    function resize() {
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+      state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      canvas.width = Math.floor(state.width * state.dpr);
+      canvas.height = Math.floor(state.height * state.dpr);
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+
+      const density = Math.max(120, Math.floor((state.width * state.height) / 9000));
+      const count = Math.min(300, density);
+      state.particleCount = count;
+
+      if (state.particles.length > count) {
+        state.particles.length = count;
+      }
+
+      while (state.particles.length < count) {
+        state.particles.push(new Particle(state.particles.length));
+      }
+    }
+
+    function connectParticles() {
+      const maxDist = 120;
+
+      for (let i = 0; i < state.particles.length; i++) {
+        const a = state.particles[i];
+
+        for (let j = i + 1; j < state.particles.length; j++) {
+          const b = state.particles[j];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const distSq = dx * dx + dy * dy;
+
+          if (distSq > maxDist * maxDist) {
+            continue;
+          }
+
+          const dist = Math.sqrt(distSq);
+          const alpha = (1 - dist / maxDist) * 0.22;
+          const gradient = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+          gradient.addColorStop(0, `hsla(${a.hue}, 100%, 70%, ${alpha})`);
+          gradient.addColorStop(1, `hsla(${b.hue}, 100%, 72%, ${alpha * 0.6})`);
+
+          ctx.beginPath();
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = 0.55 + alpha * 1.2;
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    function drawBackgroundGlow(time) {
+      const pulse = 0.5 + Math.sin(time * 0.0012) * 0.12;
+      const gradient = ctx.createRadialGradient(
+        state.width * 0.5,
+        state.height * 0.48,
+        0,
+        state.width * 0.5,
+        state.height * 0.48,
+        Math.max(state.width, state.height) * 0.58
+      );
+
+      gradient.addColorStop(0, `rgba(18, 52, 95, ${0.18 * pulse})`);
+      gradient.addColorStop(0.35, `rgba(9, 19, 40, ${0.12 * pulse})`);
+      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, state.width, state.height);
+      ctx.restore();
+    }
+
+    function emitPulse(x, y) {
+      state.pulses.push({
+        x,
+        y,
+        radius: 0,
+        force: 0.75 + Math.random() * 0.25,
+        alpha: 0.8
+      });
+
+      for (let i = 0; i < 38; i++) {
+        state.sparks.push(
+          new Spark(
+            x,
+            y,
+            (Math.PI * 2 * i) / 38 + Math.random() * 0.2,
+            2.2 + Math.random() * 5.2,
+            190 + Math.random() * 35,
+            1.4 + Math.random() * 2.2
+          )
+        );
+      }
+    }
+
+    function updatePointer(event) {
+      const x = event.clientX;
+      const y = event.clientY;
+      state.pointer.speedX = x - state.pointer.lastX;
+      state.pointer.speedY = y - state.pointer.lastY;
+      state.pointer.lastX = x;
+      state.pointer.lastY = y;
+      state.pointer.x = x;
+      state.pointer.y = y;
+      state.pointer.active = true;
+    }
+
+    function animate(time) {
+      state.time = time;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.14)";
+      ctx.fillRect(0, 0, state.width, state.height);
+
+      drawBackgroundGlow(time);
+
+      ctx.shadowBlur = 0;
+
+      for (let i = state.pulses.length - 1; i >= 0; i--) {
+        const pulse = state.pulses[i];
+        pulse.radius += 7.5;
+        pulse.alpha *= 0.966;
+
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(142, 216, 255, ${pulse.alpha * 0.25})`;
+        ctx.lineWidth = 1.4;
+        ctx.shadowColor = `rgba(142, 216, 255, ${pulse.alpha * 0.55})`;
+        ctx.shadowBlur = 24;
+        ctx.arc(pulse.x, pulse.y, pulse.radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (pulse.alpha < 0.02) {
+          state.pulses.splice(i, 1);
+        }
+      }
+
+      for (let i = 0; i < state.particles.length; i++) {
+        state.particles[i].update(time);
+      }
+
+      connectParticles();
+
+      for (let i = 0; i < state.particles.length; i++) {
+        state.particles[i].draw();
+      }
+
+      for (let i = state.sparks.length - 1; i >= 0; i--) {
+        const spark = state.sparks[i];
+        spark.update();
+        spark.draw();
+
+        if (spark.life <= 0) {
+          state.sparks.splice(i, 1);
+        }
+      }
+
+      if (state.pointer.active) {
+        const ring = 20 + Math.min(50, Math.hypot(state.pointer.speedX, state.pointer.speedY) * 0.8);
+        const glow = ctx.createRadialGradient(state.pointer.x, state.pointer.y, 0, state.pointer.x, state.pointer.y, ring);
+        glow.addColorStop(0, "rgba(159, 223, 255, 0.18)");
+        glow.addColorStop(0.55, "rgba(74, 141, 255, 0.09)");
+        glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(state.pointer.x - ring, state.pointer.y - ring, ring * 2, ring * 2);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    window.addEventListener("resize", resize);
+    window.addEventListener("pointermove", updatePointer);
+    window.addEventListener("pointerdown", (event) => {
+      state.pointer.down = true;
+      updatePointer(event);
+      emitPulse(event.clientX, event.clientY);
+    });
+    window.addEventListener("pointerup", () => {
+      state.pointer.down = false;
+    });
+    window.addEventListener("pointerleave", () => {
+      state.pointer.active = false;
+      state.pointer.down = false;
+    });
+
+    resize();
+    emitPulse(window.innerWidth * 0.5, window.innerHeight * 0.5);
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
